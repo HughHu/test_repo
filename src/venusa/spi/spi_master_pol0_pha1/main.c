@@ -147,7 +147,7 @@ static void run_spi_test_case(const char* test_name, uint32_t io_flags, uint32_t
     TEST_ASSERT_EQUAL_INT_MESSAGE(CSK_DRIVER_OK, ret, "SPI_PowerControl (FULL) failed.");
 
     ret = SPI_Control(spi_dev, CSK_SPI_MODE_MASTER | io_flags |
-                 CSK_SPI_CPOL0_CPHA0 |      // Mode 0
+                 CSK_SPI_CPOL0_CPHA1 |      // Mode 1
                  CSK_SPI_DATA_BITS(8) |
                  CSK_SPI_MSB_LSB, SPI_SCK_FREQ);
     TEST_ASSERT_EQUAL_INT_MESSAGE(CSK_DRIVER_OK, ret, "SPI_Control failed.");
@@ -209,7 +209,7 @@ void test_spi_dma_variable_lengths_and_patterns(void); // Renamed for clarity
 int main()
 {
     logInit(0, 115200);
-    CLOGD("\r\n++++++++++ SPI%d Master POL=0 PHA=0 Variable Length Tests +++++++++++\r\n\r\n", SPI_INSTANCE);
+    CLOGD("\r\n++++++++++ SPI%d Master POL=0 PHA=1 Variable Length Tests +++++++++++\r\n\r\n", SPI_INSTANCE);
 
     config_spi(); // Initial hardware pin configuration
 
