@@ -2,7 +2,7 @@ TOPDIR=../../../../..
 
 #lib or target you want to build: eg. LIB=libmisc.a  or TARGET=wlan
 LIB		= 
-TARGET = spi_master_pol0_pha0
+TARGET = spi_slave
 
 # modules depend by this module
 MODULES = bsp driver unity

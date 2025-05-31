@@ -20,6 +20,10 @@
 #define SPI_INSTANCE           0
 #endif
 
+#ifndef SPI_MODE
+#define SPI_MODE               CSK_SPI_CPOL0_CPHA0
+#endif
+
 #ifndef SPI_SCK_PIN
 #define SPI_SCK_PIN            16
 #endif
@@ -53,23 +57,28 @@
 #endif
 
 #ifndef SPI_SCK_FREQ
-#define SPI_SCK_FREQ          100000
+#define SPI_SCK_FREQ          4000000
 #endif
 
 #ifndef SPI_BUF_SIZE
-#define SPI_BUF_SIZE          8
+#define SPI_BUF_SIZE          32
+#endif
+
+#ifndef SPI_DELAY_MS
+#define SPI_DELAY_MS          1000
 #endif
 
 
-uint8_t buf_send[SPI_BUF_SIZE];
-uint8_t buf_recv[SPI_BUF_SIZE];  
+volatile uint8_t buf_send[SPI_BUF_SIZE];
+volatile uint8_t buf_recv[SPI_BUF_SIZE];
 
-void* spi_dev = NULL;    
+void* spi_dev = NULL;
+volatile int flag_cmplt = 0;
 
 static void config_spi()
 {
 
-#if (SPI_INSTANCE == 0)   
+#if (SPI_INSTANCE == 0)
     IOMuxManager_PinConfigure(SPI_SCK_PAD, SPI_SCK_PIN, CSK_IOMUX_FUNC_ALTER5);    // SCK
     IOMuxManager_PinConfigure(SPI_CS_PAD, SPI_CS_PIN, CSK_IOMUX_FUNC_ALTER5);      // CS
     IOMuxManager_PinConfigure(SPI_MOSI_PAD, SPI_MOSI_PIN, CSK_IOMUX_FUNC_ALTER5);  // MOSI
@@ -103,8 +112,8 @@ static void close_spi(void *spi_dev)
     }
 }
 
-//SPI master event callback
-static void SPI_DrvEvent_m (uint32_t event, uint32_t usr_param)
+//SPI event callback
+static void SPI_DrvEvent (uint32_t event, uint32_t usr_param)
 {
     void *spi_dev = (void *)usr_param;
     assert(spi_dev != NULL);
@@ -116,7 +125,10 @@ static void SPI_DrvEvent_m (uint32_t event, uint32_t usr_param)
         CLOGD("%s: event = 0x%x (status = 0x%x), other than TRANSFER_COMPLETE!\r\n",
                 __func__, event, status.all);
         return;
+    } else {
+    	flag_cmplt = 1;
     }
+
 
     return;
 }
@@ -135,15 +147,15 @@ void test_spi_dma(void);
 int main()
 {
     logInit(0, 115200);
-    CLOGD("\r\n++++++++++ SPI%d Master POL=0 PHA=0 +++++++++++\r\n\r\n", SPI_INSTANCE);
+    CLOG("\r\n++++++++++ SPI%d Slave Mode%d ++++++++++\r\n", SPI_INSTANCE, (SPI_MODE >> CSK_SPI_FRAME_FORMAT_Pos) - 1);
 
     config_spi();
 
-    UNITY_BEGIN();  
+    UNITY_BEGIN();
     RUN_TEST(test_spi_pio);
     RUN_TEST(test_spi_dma);
     UNITY_END();
-    
+
     close_spi(spi_dev);
 
     return 0;
@@ -155,16 +167,15 @@ void test_spi_pio(void)
 
     memset(buf_send, 0x55, SPI_BUF_SIZE);
 
-    ret = SPI_Initialize(spi_dev, SPI_DrvEvent_m, (uint32_t)spi_dev);
+    ret = SPI_Initialize(spi_dev, SPI_DrvEvent, (uint32_t)spi_dev);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
     ret = SPI_PowerControl(spi_dev, CSK_POWER_FULL);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
-    ret = SPI_Control(spi_dev, CSK_SPI_MODE_MASTER | CSK_SPI_TXIO_PIO | CSK_SPI_RXIO_PIO |
-                 CSK_SPI_CPOL0_CPHA0 |
-                 CSK_SPI_DATA_BITS(8) |
-                 CSK_SPI_MSB_LSB, SPI_SCK_FREQ);
+    ret = SPI_Control(spi_dev, CSK_SPI_MODE_SLAVE | CSK_SPI_TXIO_PIO | CSK_SPI_RXIO_PIO |
+                 CSK_SPI_DATA_BITS(8) | CSK_SPI_MSB_LSB |
+                 SPI_MODE, SPI_SCK_FREQ);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
 
@@ -172,14 +183,27 @@ void test_spi_pio(void)
     ret = SPI_Send(spi_dev, buf_send, SPI_BUF_SIZE);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
+    while(flag_cmplt == 0)
+    	;
+    flag_cmplt = 0;
+
     // receive SPI_BUF_SIZE bytes
     ret = SPI_Receive(spi_dev, buf_recv, SPI_BUF_SIZE);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
+
+    while(flag_cmplt == 0)
+    	;
+    flag_cmplt = 0;
+
     // check received data
     TEST_ASSERT(memcmp(buf_send, buf_recv, SPI_BUF_SIZE) == 0);
 
     SPI_PowerControl (spi_dev, CSK_POWER_OFF);
     SPI_Uninitialize(spi_dev);
+
+    // add some dealy after
+    SysTick_Delay_Ms(SPI_DELAY_MS);
+
 }
 
 void test_spi_dma(void)
@@ -188,28 +212,39 @@ void test_spi_dma(void)
 
     memset(buf_send, 0x55, SPI_BUF_SIZE);
 
-    ret = SPI_Initialize(spi_dev, SPI_DrvEvent_m, (uint32_t)spi_dev);
+    ret = SPI_Initialize(spi_dev, SPI_DrvEvent, (uint32_t)spi_dev);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
     ret = SPI_PowerControl(spi_dev, CSK_POWER_FULL);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
-    ret = SPI_Control(spi_dev, CSK_SPI_MODE_MASTER | CSK_SPI_TXIO_DMA | CSK_SPI_RXIO_DMA |
-                 CSK_SPI_CPOL0_CPHA0 |
-                 CSK_SPI_DATA_BITS(8) |
-                 CSK_SPI_MSB_LSB, SPI_SCK_FREQ);
+    ret = SPI_Control(spi_dev, CSK_SPI_MODE_SLAVE | CSK_SPI_TXIO_DMA | CSK_SPI_RXIO_DMA |
+                 CSK_SPI_DATA_BITS(8) | CSK_SPI_MSB_LSB |
+                 SPI_MODE, SPI_SCK_FREQ);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
     // send SPI_BUF_SIZE bytes
     ret = SPI_Send(spi_dev, buf_send, SPI_BUF_SIZE);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
 
+    while(flag_cmplt == 0)
+    	;
+    flag_cmplt = 0;
+
     // receive SPI_BUF_SIZE bytes
     ret = SPI_Receive(spi_dev, buf_recv, SPI_BUF_SIZE);
     TEST_ASSERT(ret == CSK_DRIVER_OK);
+
+    while(flag_cmplt == 0)
+    	;
+    flag_cmplt = 0;
+
     // check received data
     TEST_ASSERT(memcmp(buf_send, buf_recv, SPI_BUF_SIZE) == 0);
 
     SPI_PowerControl (spi_dev, CSK_POWER_OFF);
     SPI_Uninitialize(spi_dev);
+
+    // add some dealy after
+    SysTick_Delay_Ms(SPI_DELAY_MS);
 }
